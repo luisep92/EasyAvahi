@@ -65,23 +65,13 @@ class AvahiClient(AvahiInterface):
             return False
 
         try:
-            # Get local IP address
+            # Get hostname
             hostname = socket.gethostname()
             if service.host:
                 hostname = service.host
 
-            # Get local IP addresses
-            try:
-                local_ip = socket.gethostbyname(hostname)
-                addresses = [socket.inet_aton(local_ip)]
-            except Exception:
-                # Fallback to getting all local IPs
-                addresses = []
-                for addr_info in socket.getaddrinfo(socket.gethostname(), None):
-                    if addr_info[0] == socket.AF_INET:  # IPv4 only for now
-                        addresses.append(socket.inet_aton(addr_info[4][0]))
-                if not addresses:
-                    addresses = [socket.inet_aton("127.0.0.1")]
+            # Get the real network IP address (not localhost)
+            addresses = self._get_network_addresses()
 
             # Convert TXT record to bytes
             properties = {}
@@ -300,6 +290,69 @@ class AvahiClient(AvahiInterface):
     def clear_cache(self) -> None:
         """Clear any cached service discovery data."""
         self.discovered_services = []
+
+    def _get_network_addresses(self) -> list:
+        """
+        Get real network IP addresses (not localhost).
+
+        Returns:
+            List of IP addresses in binary format (inet_aton)
+        """
+        addresses = []
+
+        # Method 1: Try to connect to external IP to find the default route interface
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+
+            # Only add if it's not localhost
+            if local_ip and not local_ip.startswith("127."):
+                addresses.append(socket.inet_aton(local_ip))
+                self.log(f"  └─ Detected network IP: {local_ip}")
+        except Exception as e:
+            self.log(f"  └─ Could not detect default route IP: {e}")
+
+        # Method 2: Try all interfaces from getaddrinfo
+        try:
+            hostname = socket.gethostname()
+            for addr_info in socket.getaddrinfo(hostname, None):
+                if addr_info[0] == socket.AF_INET:  # IPv4 only
+                    ip = addr_info[4][0]
+                    # Skip localhost addresses
+                    if not ip.startswith("127."):
+                        ip_bytes = socket.inet_aton(ip)
+                        if ip_bytes not in addresses:
+                            addresses.append(ip_bytes)
+                            self.log(f"  └─ Found interface IP: {ip}")
+        except Exception as e:
+            self.log(f"  └─ Could not enumerate interfaces: {e}")
+
+        # Method 3: Use netifaces if available (more reliable but optional dependency)
+        try:
+            import netifaces
+            for iface in netifaces.interfaces():
+                addrs = netifaces.ifaddresses(iface)
+                if netifaces.AF_INET in addrs:
+                    for addr in addrs[netifaces.AF_INET]:
+                        ip = addr.get('addr')
+                        if ip and not ip.startswith("127."):
+                            ip_bytes = socket.inet_aton(ip)
+                            if ip_bytes not in addresses:
+                                addresses.append(ip_bytes)
+                                self.log(f"  └─ Found interface IP (netifaces): {ip}")
+        except ImportError:
+            pass  # netifaces not available, that's okay
+        except Exception as e:
+            self.log(f"  └─ Error using netifaces: {e}")
+
+        # Fallback to localhost only if we found nothing
+        if not addresses:
+            self.log("  └─ Warning: No network interfaces found, using localhost")
+            addresses.append(socket.inet_aton("127.0.0.1"))
+
+        return addresses
 
     def log(self, message: str) -> None:
         """Log a message."""
