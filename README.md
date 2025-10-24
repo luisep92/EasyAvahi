@@ -227,9 +227,47 @@ sudo apt-get install python3-dbus python3-gi avahi-daemon
 
 ### Services not visible to avahi-browse
 
-If using zeroconf backend on Linux, services won't be visible to `avahi-browse` because both try to use the same port.
+**The Issue:**
+`avahi-daemon` and `zeroconf` both listen on port 5353 and cannot coexist. When using the zeroconf backend on Linux:
+- Your services ARE on the network (other mDNS clients can see them)
+- `avahi-browse` WON'T see them (because avahi-daemon has the port)
+- This is expected behavior, not a bug
 
-Solution: Install D-Bus bindings to use native Avahi backend (see above).
+**Solutions:**
+
+1. **Use Avahi D-Bus backend** (native Linux only):
+   ```bash
+   sudo apt-get install python3-dbus python3-gi avahi-daemon
+   # Must use system Python, not pyenv/venv
+   ```
+
+2. **Verify services are working** without avahi-browse:
+   ```bash
+   python3 verify_network.py
+   ```
+   This script proves services are visible on the network.
+
+### WSL (Windows Subsystem for Linux)
+
+**Special Considerations:**
+
+WSL has unique challenges with Avahi D-Bus:
+- D-Bus may not work correctly even if installed
+- systemd services may have limitations
+- Using pyenv/virtualenvs makes D-Bus integration difficult
+
+**Recommended approach for WSL:**
+1. Use the zeroconf backend (works great)
+2. Use `verify_network.py` to confirm services are on the network
+3. Don't rely on `avahi-browse` in WSL
+
+**If you need Avahi D-Bus in WSL:**
+- Use system Python (`/usr/bin/python3`), not pyenv
+- Install dependencies: `sudo apt-get install python3-dbus python3-gi`
+- Start D-Bus: `sudo service dbus start`
+- Start Avahi: `sudo service avahi-daemon start`
+
+Even then, it may not work reliably. The zeroconf backend is more reliable for WSL.
 
 ### Windows: "dns-sd not found"
 
