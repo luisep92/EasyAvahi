@@ -110,7 +110,16 @@ class AvahiClient(AvahiInterface):
             service_key = (service.name, service.service_type)
             self.published_services[service_key] = service_info
 
+            # Log detailed information
+            addr_strs = [socket.inet_ntoa(addr) for addr in addresses]
             self.log(f"Service '{service.name}' published successfully")
+            self.log(f"  └─ Type: {service.service_type}")
+            self.log(f"  └─ Port: {service.port}")
+            self.log(f"  └─ Host: {hostname}.{service.domain}.")
+            self.log(f"  └─ Address(es): {', '.join(addr_strs)}")
+            if service.txt_record:
+                self.log(f"  └─ TXT records: {service.txt_record}")
+
             return True
 
         except Exception as e:
@@ -148,6 +157,8 @@ class AvahiClient(AvahiInterface):
             del self.published_services[service_key]
 
             self.log(f"Service '{service.name}' unpublished successfully")
+            self.log(f"  └─ Type: {service.service_type}")
+            self.log(f"  └─ Removed from network")
             return True
 
         except Exception as e:
@@ -177,6 +188,9 @@ class AvahiClient(AvahiInterface):
         if not full_service_type.endswith('.'):
             full_service_type += ".local."
 
+        self.log(f"Starting browse for service type: {full_service_type}")
+        self.log("  └─ Scanning network for services...")
+
         def on_service_state_change(
             zeroconf: Zeroconf,
             service_type: str,
@@ -185,10 +199,13 @@ class AvahiClient(AvahiInterface):
         ) -> None:
             """Callback for service state changes."""
             if state_change is ServiceStateChange.Added:
+                self.log(f"  └─ Found service, resolving: {name}")
                 # Get service info
                 info = zeroconf.get_service_info(service_type, name)
                 if info:
                     self._process_service_info(info, service_type)
+                else:
+                    self.log(f"  └─ Warning: Could not resolve service {name}")
 
         try:
             # Create a service browser
@@ -204,6 +221,9 @@ class AvahiClient(AvahiInterface):
 
             # Stop the browser
             browser.cancel()
+
+            # Log summary
+            self.log(f"Browse completed: found {len(self.discovered_services)} service(s)")
 
             return self.discovered_services
 
@@ -254,7 +274,25 @@ class AvahiClient(AvahiInterface):
             )
 
             self.discovered_services.append(mdns_service)
-            self.log(f"Discovered service: {name}")
+
+            # Log detailed service information
+            self.log(f"✓ Resolved service: {name}")
+            self.log(f"    ├─ Type: {stype}")
+            self.log(f"    ├─ Port: {info.port}")
+            self.log(f"    ├─ Host: {host}.{domain}.")
+
+            # Log addresses
+            if info.addresses:
+                addr_strs = [socket.inet_ntoa(addr) for addr in info.addresses]
+                self.log(f"    ├─ Address(es): {', '.join(addr_strs)}")
+
+            # Log TXT records
+            if txt_record:
+                self.log(f"    └─ TXT records:")
+                for key, value in txt_record.items():
+                    self.log(f"        └─ {key} = {value}")
+            else:
+                self.log(f"    └─ TXT records: (none)")
 
         except Exception as e:
             self.log(f"Error processing service info: {e}")
