@@ -1,61 +1,32 @@
 # EasyAvahi
 
-A cross-platform Python library for mDNS service discovery and publication that works seamlessly on both Linux (with Avahi) and Windows (with Bonjour/zeroconf).
+Cross-platform Python library for mDNS service discovery and publication.
 
 ## The Problem
 
-mDNS services can be discovered and published using different implementations:
-- **Linux**: Avahi daemon (native)
-- **Windows**: Bonjour service (Apple)
-- **Cross-platform**: python-zeroconf library
-
-However, **Avahi and zeroconf cannot coexist** on the same machine because they both try to listen on the same multicast port (5353). This means:
-- If you use `zeroconf` library on Linux where `avahi-daemon` is running, they won't see each other
-- Tools like `avahi-browse` won't see services published by `zeroconf`
-- Your Python script won't see services published by Avahi
+**Avahi and zeroconf cannot coexist** - both listen on port 5353. This means:
+- Using `zeroconf` on Linux where `avahi-daemon` runs → tools don't see each other
+- `avahi-browse` won't see services published by `zeroconf`
+- Python scripts can't see services published by Avahi
 
 ## The Solution
 
-EasyAvahi automatically selects the best backend for your platform:
+**Hybrid backend architecture** - automatically selects the best implementation:
 
-### Linux (with Avahi installed)
-- **Uses**: Avahi D-Bus backend
-- **Communicates with**: Native `avahi-daemon` via D-Bus
-- **Compatible with**: `avahi-browse`, `avahi-publish`, and all Avahi-based tools
-- **Sees**: All mDNS services on the network (published by any implementation)
+- **Linux with Avahi**: Uses D-Bus → compatible with `avahi-browse`
+- **Windows/WSL/Fallback**: Uses zeroconf → cross-platform
 
-### Windows / Other platforms
-- **Uses**: Zeroconf backend
-- **Independent**: Pure Python implementation
-- **Compatible with**: `dns-sd`, Bonjour Browser, and other mDNS clients
-- **Sees**: All mDNS services on the network (published by any implementation)
+Same code, works everywhere.
 
 ## Installation
 
-### Basic Installation (cross-platform)
-
 ```bash
+# Minimum (cross-platform)
 pip install zeroconf
-```
 
-### Linux with Avahi Support
-
-```bash
-# Install system packages
+# Linux with Avahi support (optional, for avahi-browse compatibility)
 sudo apt-get install python3-dbus python3-gi avahi-daemon
-
-# Install zeroconf as fallback
-pip install zeroconf
-```
-
-### Windows
-
-```bash
-# Only zeroconf needed
-pip install zeroconf
-
-# Optionally install Bonjour Print Services for dns-sd tool
-# Download from: https://support.apple.com/kb/DL999
+# Note: Must use system Python, not pyenv/venv
 ```
 
 ## Usage
@@ -64,228 +35,108 @@ pip install zeroconf
 from AvahiClient import AvahiClient
 from Interface import MdnsService
 
-# Create client (automatically selects best backend)
+# Create client (auto-selects backend)
 client = AvahiClient()
 
-# Publish a service
+# Publish service
 service = MdnsService(
     name="my-service",
     service_type="_http._tcp",
     port=8080,
-    txt_record={"version": "1.0", "path": "/api"},
+    txt_record={"version": "1.0"},
     domain="local",
     host=""
 )
-
 client.publish(service)
 
 # Discover services
 services = client.browse("_http._tcp")
 for s in services:
-    print(f"Found: {s.name} at {s.host}:{s.port}")
+    print(f"{s.name} at {s.host}:{s.port}")
 
 # Cleanup
 client.unpublish(service)
 client.stop()
 ```
 
-## Verifying with Native Tools
+## Testing
 
-### Linux - Using avahi-browse
-
-When using the Avahi D-Bus backend on Linux, your services will be visible to `avahi-browse`:
-
+### Run the integration test:
 ```bash
-# Browse all services
+python3 Test.py
+```
+
+### Verify services on the network:
+
+**Option 1 - With mdns_browse.py (recommended for WSL/testing):**
+```bash
+# Terminal 1 - Run browser
+python3 mdns_browse.py _http._tcp
+
+# Terminal 2 - Run your code or test
+python3 Test.py
+```
+
+Services will appear (+) and disappear (-) in real-time.
+
+**Option 2 - With native tools (Linux with Avahi D-Bus only):**
+```bash
+# Terminal 1
 avahi-browse -ar
 
-# Browse specific service type
-avahi-browse _http._tcp -r
-
-# You should see services published by your Python script
+# Terminal 2
+python3 Test.py
 ```
 
-### Windows - Using dns-sd
-
-With Bonjour installed, you can use `dns-sd`:
-
+**Option 3 - With native tools (Windows with Bonjour):**
 ```bash
-# Browse all services
-dns-sd -B _services._dns-sd._udp
-
-# Browse specific service type
+# Terminal 1
 dns-sd -B _http._tcp
 
-# Resolve a specific service
-dns-sd -L "my-service" _http._tcp
-```
-
-## How It Works
-
-### Backend Selection
-
-```
-┌─────────────────┐
-│  AvahiClient    │
-└────────┬────────┘
-         │
-         ├─ Linux? ───┐
-         │            │
-         │            ├─ Try Avahi D-Bus
-         │            │  ├─ Success → AvahiDBusBackend
-         │            │  └─ Fail → ZeroconfBackend
-         │            │
-         └─ Windows/Other → ZeroconfBackend
-```
-
-### Network Communication
-
-Both backends use standard mDNS protocol (RFC 6762):
-- Multicast group: `224.0.0.251` (IPv4) or `ff02::fb` (IPv6)
-- Port: `5353`
-- All implementations can see each other on the network
-
-### Why This Matters
-
-**Wrong approach (doesn't work):**
-```python
-# On Linux with avahi-daemon running
-from zeroconf import Zeroconf
-
-zc = Zeroconf()  # Opens its own socket on port 5353
-# Problem: avahi-daemon already has port 5353
-# Result: They don't see each other's services
-```
-
-**Correct approach (EasyAvahi):**
-```python
-from AvahiClient import AvahiClient
-
-client = AvahiClient()  # On Linux: uses D-Bus to talk to avahi-daemon
-                       # On Windows: uses zeroconf
-# Result: Compatible with native tools on each platform
+# Terminal 2
+python3 Test.py
 ```
 
 ## Architecture
 
 ```
 EasyAvahi/
-├── Interface.py              # Abstract interface definition
-├── AvahiClient.py           # Main client with backend selection
-├── AvahiDBusBackend.py      # Linux/Avahi implementation via D-Bus
-├── ZeroconfBackend.py       # Cross-platform implementation
-├── Test.py                  # Integration tests
-└── run_test.py              # Test runner
+├── Interface.py              # Abstract interface
+├── AvahiClient.py           # Main client with auto backend selection
+├── AvahiDBusBackend.py      # Linux/Avahi via D-Bus
+├── ZeroconfBackend.py       # Cross-platform zeroconf
+├── Test.py                  # Integration test
+└── mdns_browse.py           # Independent browser tool
 ```
+
+## Why mdns_browse.py?
+
+`mdns_browse.py` is an **independent** tool (like `avahi-browse`) that:
+- Only **listens** for services (doesn't publish)
+- Works in WSL where `avahi-browse` can't see zeroconf services
+- Perfect for testing: browser in one terminal, publisher in another
+- Cross-platform, pure Python
+
+## WSL Considerations
+
+WSL has limitations with D-Bus/systemd. **Recommended approach:**
+- Use zeroconf backend (works perfectly)
+- Use `mdns_browse.py` instead of `avahi-browse`
+- Don't worry about D-Bus in WSL
 
 ## Requirements
 
-### Minimum (Cross-platform)
+### Cross-platform (minimum)
 - Python 3.7+
 - zeroconf
 
-### Linux with Avahi support
-- Python 3.7+
+### Linux with Avahi D-Bus support
+- Python 3.7+ (system Python, not pyenv)
 - python3-dbus
 - python3-gi
 - avahi-daemon (running)
 - zeroconf (fallback)
 
-### Windows
-- Python 3.7+
-- zeroconf
-- Bonjour Service (optional, for dns-sd tool)
-
-## Testing
-
-```bash
-# Run the integration test
-python3 run_test.py
-
-# The test will:
-# 1. Publish a test service
-# 2. Discover it
-# 3. Verify TXT records
-# 4. Unpublish it
-# 5. Verify it's gone
-
-# You can verify in parallel with native tools:
-# Linux:   avahi-browse _http._tcp -r
-# Windows: dns-sd -B _http._tcp
-```
-
-## Troubleshooting
-
-### Linux: "Avahi D-Bus not available"
-
-This is normal if D-Bus bindings aren't installed. The client will automatically fall back to zeroconf.
-
-To use native Avahi:
-```bash
-sudo apt-get install python3-dbus python3-gi avahi-daemon
-```
-
-### Services not visible to avahi-browse
-
-**The Issue:**
-`avahi-daemon` and `zeroconf` both listen on port 5353 and cannot coexist. When using the zeroconf backend on Linux:
-- Your services ARE on the network (other mDNS clients can see them)
-- `avahi-browse` WON'T see them (because avahi-daemon has the port)
-- This is expected behavior, not a bug
-
-**Solutions:**
-
-1. **Use Avahi D-Bus backend** (native Linux only):
-   ```bash
-   sudo apt-get install python3-dbus python3-gi avahi-daemon
-   # Must use system Python, not pyenv/venv
-   ```
-
-2. **Verify services are working** without avahi-browse:
-   ```bash
-   python3 verify_network.py
-   ```
-   This script proves services are visible on the network.
-
-### WSL (Windows Subsystem for Linux)
-
-**Special Considerations:**
-
-WSL has unique challenges with Avahi D-Bus:
-- D-Bus may not work correctly even if installed
-- systemd services may have limitations
-- Using pyenv/virtualenvs makes D-Bus integration difficult
-
-**Recommended approach for WSL:**
-1. Use the zeroconf backend (works great)
-2. Use `verify_network.py` to confirm services are on the network
-3. Don't rely on `avahi-browse` in WSL
-
-**If you need Avahi D-Bus in WSL:**
-- Use system Python (`/usr/bin/python3`), not pyenv
-- Install dependencies: `sudo apt-get install python3-dbus python3-gi`
-- Start D-Bus: `sudo service dbus start`
-- Start Avahi: `sudo service avahi-daemon start`
-
-Even then, it may not work reliably. The zeroconf backend is more reliable for WSL.
-
-### Windows: "dns-sd not found"
-
-Install Bonjour Print Services or iTunes (includes Bonjour).
-
-### No network interface found
-
-The client detects network interfaces automatically. If it can't find any, it falls back to localhost (127.0.0.1), which means services won't be visible on the network.
-
-Check your network connection and firewall settings.
-
 ## License
 
-MIT License - See LICENSE file for details.
-
-## Contributing
-
-Contributions are welcome! Please ensure:
-- Code works on both Linux and Windows
-- Tests pass on both platforms
-- Native tool compatibility is maintained (avahi-browse, dns-sd)
+MIT License

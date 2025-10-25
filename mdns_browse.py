@@ -1,19 +1,35 @@
 #!/usr/bin/env python3
 """
-Standalone mDNS browser - works like avahi-browse but uses zeroconf.
+Standalone mDNS Service Browser
 
-Usage:
+This is an INDEPENDENT tool that monitors mDNS services on your network,
+similar to 'avahi-browse -ar'. It uses zeroconf to listen for services.
+
+WHY THIS EXISTS:
+- In WSL/environments where avahi-browse doesn't work with zeroconf services
+- For testing: Run this in one terminal, your service publisher in another
+- Cross-platform alternative to avahi-browse that uses pure Python
+
+USE CASE:
+  Terminal 1: python3 mdns_browse.py _http._tcp
+  Terminal 2: python3 Test.py (or your service publisher)
+
+  The browser will show services as they appear (+) and disappear (-).
+
+USAGE:
     # Browse all common service types
     python3 mdns_browse.py
 
-    # Browse specific service type
+    # Browse specific service type (recommended for testing)
     python3 mdns_browse.py _http._tcp
 
     # Browse multiple service types
     python3 mdns_browse.py _http._tcp _ssh._tcp
 
-This script runs independently and reports services as they appear/disappear
-on the network. Run your service publisher in another terminal.
+IMPORTANT:
+- This script is INDEPENDENT from AvahiClient
+- It only LISTENS, it does NOT publish
+- Use it to verify services published by your code
 """
 
 import sys
