@@ -76,3 +76,43 @@ def test_publish_browse_unpublish(avahi: AvahiInterface):
     
     avahi.log(f"Service {test_service.name} successfully removed from network")
     avahi.log("Test completed successfully")
+
+
+if __name__ == "__main__":
+    """Run the test when executed directly."""
+    import sys
+    from AvahiClient import AvahiClient
+
+    print("=" * 60)
+    print("Running Avahi Integration Test")
+    print("=" * 60)
+    print()
+
+    client = AvahiClient()
+
+    try:
+        test_publish_browse_unpublish(client)
+        print()
+        print("=" * 60)
+        print("✓ ALL TESTS PASSED")
+        print("=" * 60)
+        sys.exit(0)
+
+    except AssertionError as e:
+        print()
+        print("=" * 60)
+        print(f"✗ TEST FAILED: {e}")
+        print("=" * 60)
+        sys.exit(1)
+
+    except Exception as e:
+        print()
+        print("=" * 60)
+        print(f"✗ ERROR: {e}")
+        print("=" * 60)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+    finally:
+        client.stop()
