@@ -1,32 +1,20 @@
 # EasyAvahi
 
-Cross-platform Python library for mDNS service discovery and publication.
+A small Python library wrapping mDNS service discovery and publication behind a clean abstract interface. Built to understand mDNS properly and end up with a class you can use to publish, browse, and test against in a few lines.
 
-## The Problem
+## What it does
 
-**Avahi and zeroconf cannot coexist** - both listen on port 5353. This means:
-- Using `zeroconf` on Linux where `avahi-daemon` runs → tools don't see each other
-- `avahi-browse` won't see services published by `zeroconf`
-- Python scripts can't see services published by Avahi
-
-## The Solution
-
-**Hybrid backend architecture** - automatically selects the best implementation:
-
-- **Linux with Avahi**: Uses D-Bus → compatible with `avahi-browse`
-- **Windows/WSL/Fallback**: Uses zeroconf → cross-platform
-
-Same code, works everywhere.
+mDNS (multicast DNS) is the protocol behind zero-config service discovery on local networks — printers advertising themselves, AirPlay and Chromecast pairing, IoT devices and gateways finding each other. Python has two common routes for it: the `zeroconf` library (pure Python, cross-platform) and Avahi via D-Bus (native on Linux). EasyAvahi wraps both behind one interface so callers don't have to care which one is in use.
 
 ## Installation
 
 ```bash
-# Minimum (cross-platform)
+# Cross-platform minimum
 pip install zeroconf
 
-# Linux with Avahi support (optional, for avahi-browse compatibility)
+# Linux with Avahi support (optional, gives you avahi-browse compatibility)
 sudo apt-get install python3-dbus python3-gi avahi-daemon
-# Note: Must use system Python, not pyenv/venv
+# Note: the Avahi backend needs system Python, not pyenv/venv.
 ```
 
 ## Usage
@@ -35,23 +23,22 @@ sudo apt-get install python3-dbus python3-gi avahi-daemon
 from AvahiClient import AvahiClient
 from Interface import MdnsService
 
-# Create client (auto-selects backend)
+# Backend is auto-selected: Avahi D-Bus on Linux if available, zeroconf otherwise.
 client = AvahiClient()
 
-# Publish service
+# Publish a service
 service = MdnsService(
     name="my-service",
     service_type="_http._tcp",
     port=8080,
     txt_record={"version": "1.0"},
     domain="local",
-    host=""
+    host="",
 )
 client.publish(service)
 
-# Discover services
-services = client.browse("_http._tcp")
-for s in services:
+# Discover services of a given type
+for s in client.browse("_http._tcp"):
     print(f"{s.name} at {s.host}:{s.port}")
 
 # Cleanup
@@ -61,82 +48,46 @@ client.stop()
 
 ## Testing
 
-### Run the integration test:
+`Test.py` runs a real-network integration test: publishes a service, browses for it, asserts the discovered service matches (name, type, port, TXT record), unpublishes, browses again, asserts it's gone. No mocks — it talks to the actual mDNS stack.
+
 ```bash
 python3 Test.py
 ```
 
-### Verify services on the network:
+To watch services from outside the test process, `mdns_browse.py` is a standalone listener (think `avahi-browse -ar`, but pure Python and cross-platform):
 
-**Option 1 - With mdns_browse.py (recommended for WSL/testing):**
 ```bash
-# Terminal 1 - Run browser
+# Terminal 1
 python3 mdns_browse.py _http._tcp
-
-# Terminal 2 - Run your code or test
-python3 Test.py
-```
-
-Services will appear (+) and disappear (-) in real-time.
-
-**Option 2 - With native tools (Linux with Avahi D-Bus only):**
-```bash
-# Terminal 1
-avahi-browse -ar
-
 # Terminal 2
 python3 Test.py
 ```
 
-**Option 3 - With native tools (Windows with Bonjour):**
-```bash
-# Terminal 1
-dns-sd -B _http._tcp
-
-# Terminal 2
-python3 Test.py
-```
+Services appear (`+`) and disappear (`-`) in real time. Useful in WSL or anywhere `avahi-browse` doesn't see services published via `zeroconf`.
 
 ## Architecture
 
-```
-EasyAvahi/
-├── Interface.py              # Abstract interface
-├── AvahiClient.py           # Main client with auto backend selection
-├── AvahiDBusBackend.py      # Linux/Avahi via D-Bus
-├── ZeroconfBackend.py       # Cross-platform zeroconf
-├── Test.py                  # Integration test
-└── mdns_browse.py           # Independent browser tool
-```
+`AvahiInterface` is the abstract base. `AvahiClient` is the only class that implements it directly — it acts as a facade that auto-selects between two backends and delegates every call:
 
-## Why mdns_browse.py?
+- **`AvahiDBusBackend`** — Linux only. Talks to the running `avahi-daemon` via D-Bus. Compatible with `avahi-browse` and other native Avahi tools.
+- **`ZeroconfBackend`** — Cross-platform. Uses the pure-Python `zeroconf` library, which brings its own mDNS stack.
 
-`mdns_browse.py` is an **independent** tool (like `avahi-browse`) that:
-- Only **listens** for services (doesn't publish)
-- Works in WSL where `avahi-browse` can't see zeroconf services
-- Perfect for testing: browser in one terminal, publisher in another
-- Cross-platform, pure Python
+The two backends are duck-typed (same methods, not subclasses of `AvahiInterface`) — they're strategies behind the facade, not implementations of the interface itself.
 
-## WSL Considerations
+File layout:
 
-WSL has limitations with D-Bus/systemd. **Recommended approach:**
-- Use zeroconf backend (works perfectly)
-- Use `mdns_browse.py` instead of `avahi-browse`
-- Don't worry about D-Bus in WSL
+- `Interface.py` — `AvahiInterface` ABC + `MdnsService` dataclass.
+- `AvahiClient.py` — Facade implementing `AvahiInterface`.
+- `AvahiDBusBackend.py` / `ZeroconfBackend.py` — The two backends.
+- `Test.py` — Integration test (runs against whichever backend gets selected).
+- `mdns_browse.py` — Standalone listener tool, independent of the rest.
 
-## Requirements
+## Notes
 
-### Cross-platform (minimum)
-- Python 3.7+
-- zeroconf
+**Avahi and the `zeroconf` library don't interoperate cleanly on the same Linux host.** Both want UDP port 5353; when `avahi-daemon` is running, services published via `zeroconf` won't show up to `avahi-browse`, and vice versa. That's why `AvahiClient` prefers the D-Bus backend on Linux when Avahi is present — it goes through the daemon instead of competing with it. An obstacle hit during development, not the design goal, but the reason the hybrid selector exists.
 
-### Linux with Avahi D-Bus support
-- Python 3.7+ (system Python, not pyenv)
-- python3-dbus
-- python3-gi
-- avahi-daemon (running)
-- zeroconf (fallback)
+**WSL:** D-Bus / systemd are limited, so the D-Bus backend usually won't work there. `AvahiClient` falls back to `ZeroconfBackend` automatically. Use `mdns_browse.py` instead of `avahi-browse`.
 
 ## License
 
-MIT License
+MIT — see [`LICENSE`](LICENSE).
